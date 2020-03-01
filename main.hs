@@ -18,23 +18,19 @@ data Expression
 type Pattern = [PatternPiece] 
 type Binding = (Pattern, Expression) 
 
--- sequenceBifunctor :: Monad f => (f a, f b) -> f (a, b)
--- sequenceBifunctor x = do
---   x' <- fst x
---   y' <- snd x
---   return (x', y')
-
 strongRightDist :: Monad f => (a, f b) -> f (a , b)
 strongRightDist (x,y) = do
   y' <- y
   return (x, y')
 
+parsePatternPiece :: Char -> PatternPiece
+parsePatternPiece '0' = Literal False
+parsePatternPiece '1' = Literal True
+parsePatternPiece '-' = DontCare
+parsePatternPiece x   = PPVar x -- TODO: is '2' a valid variable?
+
 parsePattern :: String -> Pattern
-parsePattern ""       = []
-parsePattern ('0':xs) = (Literal False) : (parsePattern xs)
-parsePattern ('1':xs) = (Literal True ) : (parsePattern xs)
-parsePattern ('-':xs) = (DontCare     ) : (parsePattern xs)
-parsePattern (x  :xs) = (PPVar x      ) : (parsePattern xs)
+parsePattern = fmap parsePatternPiece
 
 parseExpression :: String -> Maybe Expression
 parseExpression = const $ Just $ EVar 'x'
