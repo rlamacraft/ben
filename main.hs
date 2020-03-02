@@ -1,10 +1,11 @@
 import Control.Monad (sequence, (<=<))
 import Data.Bifunctor (Bifunctor, bimap, first, second)
 import Data.Function (flip)
-import Data.List (uncons)
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Text (Text, pack, splitOn, singleton, unpack)
 import System.Environment
+
+import Utils (strongRightDistribute, tupleFromList)
 
 data PatternPiece
   = PLiteral Bool
@@ -26,11 +27,6 @@ data Output
 type Pattern = [PatternPiece]
 
 type Binding = (Pattern, [Output]) 
-
-strongRightDistribute :: Monad f => (a, f b) -> f (a , b)
-strongRightDistribute (x,y) = do
-  y' <- y
-  return (x, y')
 
 parsePatternPiece :: Char -> PatternPiece
 parsePatternPiece '0' = PLiteral False
@@ -67,12 +63,6 @@ parseOutput = sequence . fmap (parseOutputPiece . unpack) . splitOn (pack "|") .
   parseOutputPiece "0" = Just $ OConstant False
   parseOutputPiece "1" = Just $ OConstant True
   parseOutputPiece x = OExpression <$> parseExpression x
-
-tupleFromList :: [a] -> Maybe (a, a)
-tupleFromList xs = do
-  (x, ys) <- uncons xs
-  (y, _ ) <- uncons ys
-  return (x, y)
 
 parseBinding :: Text -> Maybe Binding
 parseBinding = (strongRightDistribute . bimap parsePattern parseOutput)
