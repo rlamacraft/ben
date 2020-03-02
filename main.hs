@@ -7,33 +7,66 @@ import Data.Text (Text, pack, splitOn, singleton, unpack)
 import System.Environment
 
 data PatternPiece
-  = Literal Bool
-  | DontCare
-  | PPVar Char
+  = PLiteral Bool
+  | PDontCare
+  | PVar Char
   deriving (Show)
+  
 data Expression
   = EVar Char
-  | Addition Expression Expression
+  | EAddition Expression Expression
+  | ELiteral Bool
   deriving (Show)
-type Pattern = [PatternPiece] 
-type Binding = (Pattern, Expression) 
 
-strongRightDist :: Monad f => (a, f b) -> f (a , b)
-strongRightDist (x,y) = do
+data Output
+  = OExpression Expression
+  | OConstant Bool
+  deriving (Show)
+
+type Pattern = [PatternPiece]
+
+type Binding = (Pattern, [Output]) 
+
+strongRightDistribute :: Monad f => (a, f b) -> f (a , b)
+strongRightDistribute (x,y) = do
   y' <- y
   return (x, y')
 
 parsePatternPiece :: Char -> PatternPiece
-parsePatternPiece '0' = Literal False
-parsePatternPiece '1' = Literal True
-parsePatternPiece '-' = DontCare
-parsePatternPiece x   = PPVar x -- TODO: is '2' a valid variable?
+parsePatternPiece '0' = PLiteral False
+parsePatternPiece '1' = PLiteral True
+parsePatternPiece '-' = PDontCare
+parsePatternPiece x   = PVar x -- TODO: is '2' a valid variable?
 
 parsePattern :: String -> Pattern
 parsePattern = fmap parsePatternPiece
 
+data ExpressionToken = TAddition | TVar Char deriving (Eq)
+
+tokeniseExpression :: String -> Maybe [ExpressionToken]
+tokeniseExpression = sequence . fmap (tokenise . unpack) . splitOn (pack " ") . pack where
+  tokenise :: String -> Maybe ExpressionToken
+  tokenise ('+':[]) = Just $ TAddition
+  tokenise (x  :[]) = Just $ TVar x
+  tokenuse _        = Nothing
+
+constructAST :: [ExpressionToken] -> Maybe Expression
+constructAST [TVar x] = Just $ EVar x
+constructAST (x:(TAddition:xs)) = do
+  before <- constructAST [x]
+  after <- constructAST xs
+  return $ EAddition before after
+constructAST _ = Nothing
+
 parseExpression :: String -> Maybe Expression
-parseExpression = const $ Just $ EVar 'x'
+parseExpression = constructAST <=< tokeniseExpression
+
+parseOutput :: String -> Maybe [Output]
+parseOutput = sequence . fmap (parseOutputPiece . unpack) . splitOn (pack "|") . pack where
+  parseOutputPiece :: String -> Maybe Output
+  parseOutputPiece "0" = Just $ OConstant False
+  parseOutputPiece "1" = Just $ OConstant True
+  parseOutputPiece x = OExpression <$> parseExpression x
 
 tupleFromList :: [a] -> Maybe (a, a)
 tupleFromList xs = do
@@ -42,7 +75,7 @@ tupleFromList xs = do
   return (x, y)
 
 parseBinding :: Text -> Maybe Binding
-parseBinding = (strongRightDist . bimap parsePattern parseExpression)
+parseBinding = (strongRightDistribute . bimap parsePattern parseOutput)
 	     <=< tupleFromList
 	       . fmap unpack
 	       . splitOn (pack ":")
