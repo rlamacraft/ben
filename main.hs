@@ -44,7 +44,7 @@ tokeniseExpression = sequence . fmap (tokenise . unpack) . splitOn (pack " ") . 
   tokenise :: String -> Maybe ExpressionToken
   tokenise ('+':[]) = Just $ TAddition
   tokenise (x  :[]) = Just $ TVar x
-  tokenuse _        = Nothing
+  tokenise _        = Nothing
 
 constructAST :: [ExpressionToken] -> Maybe Expression
 constructAST [TVar x] = Just $ EVar x
@@ -70,15 +70,11 @@ parseBinding = (strongRightDistribute . bimap parsePattern parseOutput)
 	       . fmap unpack
 	       . splitOn (pack ":")
 
-parse :: Text -> Maybe [Binding]
-parse = sequence . fmap parseBinding . splitOn (pack ";")
+parse :: Text -> [Binding]
+parse = fmap (fromMaybe (error "Parsing Failed") . parseBinding) . splitOn (pack ";")
 
 main :: IO ()
 main = do
      args <- getArgs
-     putStrLn
-	 $ fromMaybe "Parsing Failed"     
-	 $ show	
-	<$> (parse
-	 $ pack
-	 $ head args)
+     bindings <- return $ parse $ pack $ head args
+     putStrLn $ show bindings
