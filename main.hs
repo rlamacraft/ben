@@ -1,9 +1,10 @@
+import Control.Applicative ((<*>))
 import Control.Monad (sequence, (<=<))
 import Data.Bifunctor (Bifunctor, bimap, first, second)
 import Data.Foldable (fold)
 import Data.Function (flip)
 import Data.Maybe (Maybe(..), fromMaybe)
-import Data.Monoid (All(..))
+import Data.Monoid (All(..), Any(..), Product(..))
 import Data.Text (Text, pack, splitOn, singleton, unpack)
 import System.Environment
 
@@ -80,8 +81,39 @@ verify [] = error "No bindings specified"
 verify b@(x:xs) =  if (getAll $ fold $ (All . (== width) . length . fst) <$> xs) then b else error "All patterns must have the same width." where
   width = length $ fst x
 
+exp' :: Int -> Int -> Int
+exp' a = getProduct . fold . replicate a . Product
+
+type Bit = Bool
+type BitVector = [Bit]
+
+intToBitVector :: Int -> BitVector
+intToBitVector 0 = [False]
+intToBitVector 1 = [True]
+intToBitVector x = uncurry (++) $ bimap intToBitVector intToBitVector $ quotRem x 2
+
+pad :: Int -> BitVector -> BitVector
+pad 0 _      = []
+pad n []     = [False] ++ (pad (n-1) [])
+pad n xs     = (pad (n-1) (init xs)) ++ [last xs]
+
+match :: [Binding] -> BitVector -> Bool
+match bindings n = getAny $ fold $ (Any . matchesPattern n . fst) <$> bindings where
+  matchesPattern :: BitVector -> Pattern -> Bool
+  matchesPattern bits bindingPieces = getAll $ fold $ (All . (uncurry matchesPiece)) <$> zip bits bindingPieces where
+    matchesPiece :: Bit -> PatternPiece -> Bool
+    matchesPiece False (PLiteral True) = False
+    matchesPiece True (PLiteral False) = False
+    matchesPiece _ _ = True
+
+-- for now, we're just going to check which patterns have a match (those that don't will default to 0xFF)
+run :: [Binding] -> [Bool]
+run [] = error "Can't happen"
+run bindings = (match bindings . pad width . intToBitVector) <$> [0..(exp' 2 width) - 1] where
+  width = length $ fst $ head bindings
+
 main :: IO ()
 main = do
      args <- getArgs
      bindings <- return $ verify $ parse $ pack $ head args
-     putStrLn $ show bindings
+     putStrLn $ show $ run bindings
