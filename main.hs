@@ -1,7 +1,9 @@
 import Control.Monad (sequence, (<=<))
 import Data.Bifunctor (Bifunctor, bimap, first, second)
+import Data.Foldable (fold)
 import Data.Function (flip)
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Monoid (All(..))
 import Data.Text (Text, pack, splitOn, singleton, unpack)
 import System.Environment
 
@@ -73,8 +75,13 @@ parseBinding = (strongRightDistribute . bimap parsePattern parseOutput)
 parse :: Text -> [Binding]
 parse = fmap (fromMaybe (error "Parsing Failed") . parseBinding) . splitOn (pack ";")
 
+verify :: [Binding] -> [Binding]
+verify [] = error "No bindings specified"
+verify b@(x:xs) =  if (getAll $ fold $ (All . (== width) . length . fst) <$> xs) then b else error "All patterns must have the same width." where
+  width = length $ fst x
+
 main :: IO ()
 main = do
      args <- getArgs
-     bindings <- return $ parse $ pack $ head args
+     bindings <- return $ verify $ parse $ pack $ head args
      putStrLn $ show bindings
