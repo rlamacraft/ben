@@ -3,7 +3,7 @@ import Control.Monad (sequence, (<=<))
 import Data.Bifunctor (Bifunctor, bimap, first, second)
 import Data.Foldable (fold)
 import Data.Function (flip)
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..), fromMaybe, listToMaybe)
 import Data.Monoid (All(..), Any(..), Product(..))
 import Data.Text (Text, pack, splitOn, singleton, unpack)
 import System.Environment
@@ -97,8 +97,8 @@ pad 0 _      = []
 pad n []     = [False] ++ (pad (n-1) [])
 pad n xs     = (pad (n-1) (init xs)) ++ [last xs]
 
-match :: [Binding] -> BitVector -> Bool
-match bindings n = getAny $ fold $ (Any . matchesPattern n . fst) <$> bindings where
+match :: [Binding] -> BitVector -> Maybe [Output]
+match bindings n = snd <$> (listToMaybe $ filter (matchesPattern n . fst) bindings) where
   matchesPattern :: BitVector -> Pattern -> Bool
   matchesPattern bits bindingPieces = getAll $ fold $ (All . (uncurry matchesPiece)) <$> zip bits bindingPieces where
     matchesPiece :: Bit -> PatternPiece -> Bool
@@ -107,7 +107,7 @@ match bindings n = getAny $ fold $ (Any . matchesPattern n . fst) <$> bindings w
     matchesPiece _ _ = True
 
 -- for now, we're just going to check which patterns have a match (those that don't will default to 0xFF)
-run :: [Binding] -> [Bool]
+run :: [Binding] -> [Maybe [Output]]
 run [] = error "Can't happen"
 run bindings = (match bindings . pad width . intToBitVector) <$> [0..(exp' 2 width) - 1] where
   width = length $ fst $ head bindings
