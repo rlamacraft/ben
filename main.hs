@@ -106,10 +106,13 @@ match bindings n = snd <$> (listToMaybe $ filter (matchesPattern n . fst) bindin
     matchesPiece True (PLiteral False) = False
     matchesPiece _ _ = True
 
--- for now, we're just going to check which patterns have a match (those that don't will default to 0xFF)
-run :: [Binding] -> [Maybe [Output]]
+-- If no pattern matches a value in range, then the output is 0xFF
+defaultOutput :: [Output]
+defaultOutput = (replicate 8 (OConstant True))
+
+run :: [Binding] -> [[Output]]
 run [] = error "Can't happen"
-run bindings = (match bindings . pad width . intToBitVector) <$> [0..(exp' 2 width) - 1] where
+run bindings = (fromMaybe defaultOutput . match bindings . pad width . intToBitVector) <$> [0..(exp' 2 width) - 1] where
   width = length $ fst $ head bindings
 
 main :: IO ()
