@@ -40,21 +40,24 @@ parsePatternPiece x   = PVar x -- TODO: is '2' a valid variable?
 parsePattern :: String -> Pattern
 parsePattern = fmap parsePatternPiece
 
-data ExpressionToken = TAddition | TVar Char deriving (Eq)
+data ExpressionToken = TAddition | TVar Char | TLiteral Bool deriving (Eq)
 
 tokeniseExpression :: String -> Maybe [ExpressionToken]
 tokeniseExpression = sequence . fmap (tokenise . unpack) . splitOn (pack " ") . pack where
   tokenise :: String -> Maybe ExpressionToken
   tokenise ('+':[]) = Just $ TAddition
+  tokenise ('0':[]) = Just $ TLiteral False
+  tokenise ('1':[]) = Just $ TLiteral True
   tokenise (x  :[]) = Just $ TVar x
   tokenise _        = Nothing
 
 constructAST :: [ExpressionToken] -> Maybe Expression
 constructAST [TVar x] = Just $ EVar x
-constructAST (x:(TAddition:xs)) = do
+constructAST (x:(TAddition:xs)) = do -- note: associates to the right
   before <- constructAST [x]
   after <- constructAST xs
   return $ EAddition before after
+constructAST ((TLiteral b):[]) = Just $ ELiteral b
 constructAST _ = Nothing
 
 parseExpression :: String -> Maybe Expression
@@ -110,10 +113,20 @@ match bindings n = snd <$> (listToMaybe $ filter (matchesPattern n . fst) bindin
 defaultOutput :: [Output]
 defaultOutput = (replicate 8 (OConstant True))
 
-run :: [Binding] -> [[Output]]
+run :: [Binding] -> [BitVector]
 run [] = error "Can't happen"
-run bindings = (fromMaybe defaultOutput . match bindings . pad width . intToBitVector) <$> [0..(exp' 2 width) - 1] where
+run bindings = (fold . fmap eval . fromMaybe defaultOutput . match bindings . pad width . intToBitVector)
+     <$> [0..(exp' 2 width) - 1] where
   width = length $ fst $ head bindings
+
+eval :: Output -> BitVector
+eval (OConstant b) = [b]
+eval (OExpression exp) = intToBitVector $ evalexp exp where
+  evalexp :: Expression -> Int
+  evalexp (EVar x) = 0
+  evalexp (EAddition exp1 exp2) = (evalexp exp1) + (evalexp exp2)
+  evalexp (ELiteral False) = 0
+  evalexp (ELiteral True) = 1
 
 main :: IO ()
 main = do
