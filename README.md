@@ -26,6 +26,12 @@ Note: any values in range that do not match any pattern will result in `0xFF`
 '-0:0|0|0;-1:1|1|1'
 ```
 
+* Output should be 1 more than input
+```
+"xx:x + 1"
+```
+Gives [001, 010, 011, 100]
+
 ## TODOs
-- Support variables in expressions
 - Output to stdout as binary data
+- Support modulo operator

@@ -31,6 +31,12 @@ type Pattern = [PatternPiece]
 
 type Binding = (Pattern, [Output]) 
 
+type Bit = Bool
+type BitVector = [Bit]
+
+type VariableCapture = (Char, BitVector)
+type VariableCaptures = [VariableCapture]
+
 parsePatternPiece :: Char -> PatternPiece
 parsePatternPiece '0' = PLiteral False
 parsePatternPiece '1' = PLiteral True
@@ -87,46 +93,88 @@ verify b@(x:xs) =  if (getAll $ fold $ (All . (== width) . length . fst) <$> xs)
 exp' :: Int -> Int -> Int
 exp' a = getProduct . fold . replicate a . Product
 
-type Bit = Bool
-type BitVector = [Bit]
+both :: Bifunctor f => (a -> b) -> f a a -> f b b
+both f = bimap f f
 
 intToBitVector :: Int -> BitVector
 intToBitVector 0 = [False]
 intToBitVector 1 = [True]
-intToBitVector x = uncurry (++) $ bimap intToBitVector intToBitVector $ quotRem x 2
+intToBitVector x = uncurry (++) $ both intToBitVector $ quotRem x 2
+
+bitVectorToInt :: BitVector -> Int
+bitVectorToInt [] = 0
+bitVectorToInt [False] = 0
+bitVectorToInt [True] = 1
+bitVectorToInt (x:xs) = (bitVectorToInt [x]) + (2 * bitVectorToInt xs)
 
 pad :: Int -> BitVector -> BitVector
 pad 0 _      = []
 pad n []     = [False] ++ (pad (n-1) [])
 pad n xs     = (pad (n-1) (init xs)) ++ [last xs]
 
-match :: [Binding] -> BitVector -> Maybe [Output]
-match bindings n = snd <$> (listToMaybe $ filter (matchesPattern n . fst) bindings) where
-  matchesPattern :: BitVector -> Pattern -> Bool
-  matchesPattern bits bindingPieces = getAll $ fold $ (All . (uncurry matchesPiece)) <$> zip bits bindingPieces where
-    matchesPiece :: Bit -> PatternPiece -> Bool
-    matchesPiece False (PLiteral True) = False
-    matchesPiece True (PLiteral False) = False
-    matchesPiece _ _ = True
+match :: [Binding] -> BitVector -> Maybe (VariableCaptures, [Output])
+match bindings n = (first $ bitVariableMap n) <$> getFirstMatchedPattern n bindings where
+  
+  getFirstMatchedPattern :: BitVector -> [Binding] -> Maybe Binding
+  getFirstMatchedPattern  n = listToMaybe . filter (matchesPattern n . fst) where
+  
+    matchesPattern :: BitVector -> Pattern -> Bool
+    matchesPattern bits bindingPieces = getAll $ fold $ (All . (uncurry matchesPiece)) <$> zip bits bindingPieces where
+    
+      matchesPiece :: Bit -> PatternPiece -> Bool
+      matchesPiece False (PLiteral True) = False
+      matchesPiece True (PLiteral False) = False
+      matchesPiece _ _ = True
+
+  bitVariableMap :: BitVector -> Pattern -> VariableCaptures
+  bitVariableMap n p = collapse $ zip n $ fmap patternPieceToVariableChar p where
+
+    patternPieceToVariableChar :: PatternPiece -> Maybe Char
+    patternPieceToVariableChar (PLiteral _) = Nothing
+    patternPieceToVariableChar (PDontCare) = Nothing
+    patternPieceToVariableChar (PVar c) = Just c
+
+    collapse :: [(Bit, Maybe Char)] -> VariableCaptures
+    collapse = foldl collapse' []  where
+
+      collapse' :: VariableCaptures -> (Bit, Maybe Char) -> VariableCaptures
+      collapse' vc                   (_, Nothing)  = vc
+      collapse' []                   (b, (Just c)) = (c, [b]):[]
+      collapse' (dbv@(d, bv):xs) bjc@(b, (Just c)) = if c == d then ((d, b:bv):xs) else dbv:(collapse' xs bjc)
 
 -- If no pattern matches a value in range, then the output is 0xFF
-defaultOutput :: [Output]
-defaultOutput = (replicate 8 (OConstant True))
+defaultOutput :: (VariableCaptures, [Output])
+defaultOutput = ([], (replicate 8 (OConstant True)))
+
+replicateFirst :: (a, [b]) -> [(a,b)]
+replicateFirst (a, []) = []
+replicateFirst (a, b:bs) = (a,b):(replicateFirst (a,bs))
 
 run :: [Binding] -> [BitVector]
 run [] = error "Can't happen"
-run bindings = (fold . fmap eval . fromMaybe defaultOutput . match bindings . pad width . intToBitVector)
+run bindings = (fold . fmap (uncurry eval) . replicateFirst . fromMaybe defaultOutput . match bindings . pad width . intToBitVector)
      <$> [0..(exp' 2 width) - 1] where
   width = length $ fst $ head bindings
 
-eval :: Output -> BitVector
-eval (OConstant b) = [b]
-eval (OExpression exp) = intToBitVector $ evalexp exp where
-  evalexp :: Expression -> Int
-  evalexp (EVar x) = 0
-  evalexp (EAddition exp1 exp2) = (evalexp exp1) + (evalexp exp2)
-  evalexp (ELiteral False) = 0
-  evalexp (ELiteral True) = 1
+eval :: VariableCaptures -> Output -> BitVector
+eval _  (OConstant b) = [b]
+eval vc (OExpression (EVar x)) = findVar vc x where
+
+  findVar :: VariableCaptures -> Char -> BitVector
+  findVar [] c = error $ "Unknown variable `" ++ [c] ++ "`"
+  findVar ((c,bv):xs) d = if c == d then bv else findVar xs d
+
+eval vc (OExpression exp) = intToBitVector $ evalexp vc exp where
+
+  evalexp :: VariableCaptures -> Expression -> Int
+  evalexp _  (EVar x) = error "Can't happen"
+  evalexp vc (EAddition exp1 exp2) = recurse (+) exp1 exp2
+  evalexp _  (ELiteral False) = 0
+  evalexp _  (ELiteral True) = 1
+
+  recurse :: (Int -> Int -> Int) -> Expression -> Expression -> Int
+  recurse f exp1 exp2 = (uncurry f) $ both (bitVectorToInt . eval vc . OExpression) (exp1, exp2)
+
 
 main :: IO ()
 main = do
