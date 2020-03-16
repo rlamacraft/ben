@@ -1,4 +1,4 @@
-import Control.Applicative ((<*>))
+import Control.Applicative ((<*>), (<|>))
 import Control.Monad (sequence, (<=<))
 import Data.Bifunctor (Bifunctor, bimap, first, second)
 import Data.Foldable (fold)
@@ -7,8 +7,9 @@ import Data.Maybe (Maybe(..), fromMaybe, listToMaybe)
 import Data.Monoid (All(..), Any(..), Product(..))
 import Data.Text (Text, pack, splitOn, singleton, unpack)
 import System.Environment
+import Text.Read (readMaybe)
 
-import Utils (strongRightDistribute, tupleFromList)
+import Utils (both, dropLast, fromEither, ifTrue, maybeToRight, splitOnLast, strongRightDistribute, tupleFromList)
 
 data PatternPiece
   = PLiteral Bool
@@ -18,8 +19,10 @@ data PatternPiece
   
 data Expression
   = EVar Char
+  | ELiteral Int
   | EAddition Expression Expression
-  | ELiteral Bool
+  | EModulo Expression Expression
+  | EParen Expression
   deriving (Show)
 
 data Output
@@ -34,6 +37,25 @@ type Binding = (Pattern, [Output])
 type Bit = Bool
 type BitVector = [Bit]
 
+bitToInt :: Bit -> Int
+bitToInt False = 0
+bitToInt True = 1
+
+showBitVector :: BitVector -> String
+showBitVector = fmap showBit where
+  showBit :: Bit -> Char
+  showBit = head . show . bitToInt
+
+intToBitVector :: Int -> BitVector
+intToBitVector 0 = [False]
+intToBitVector 1 = [True]
+intToBitVector x = uncurry (++) $ both intToBitVector $ quotRem x 2
+
+bitVectorToInt :: BitVector -> Int
+bitVectorToInt = bitVectorToInt' . reverse where
+  bitVectorToInt' [] = 0
+  bitVectorToInt' (x:xs) = bitToInt x + (2 * (bitVectorToInt' xs))
+
 type VariableCapture = (Char, BitVector)
 type VariableCaptures = [VariableCapture]
 
@@ -46,66 +68,70 @@ parsePatternPiece x   = PVar x -- TODO: is '2' a valid variable?
 parsePattern :: String -> Pattern
 parsePattern = fmap parsePatternPiece
 
-data ExpressionToken = TAddition | TVar Char | TLiteral Bool deriving (Eq)
+data ExpressionToken
+  = TVar Char
+  | TLiteral Int
+  | TAddition
+  | TModulo
+  | TOpenParen
+  | TCloseParen
+  deriving (Eq, Show)
 
 tokeniseExpression :: String -> Maybe [ExpressionToken]
 tokeniseExpression = sequence . fmap (tokenise . unpack) . splitOn (pack " ") . pack where
   tokenise :: String -> Maybe ExpressionToken
   tokenise ('+':[]) = Just $ TAddition
-  tokenise ('0':[]) = Just $ TLiteral False
-  tokenise ('1':[]) = Just $ TLiteral True
-  tokenise (x  :[]) = Just $ TVar x
-  tokenise _        = Nothing
+  tokenise ('%':[]) = Just $ TModulo
+  tokenise ('(':[]) = Just $ TOpenParen
+  tokenise (')':[]) = Just $ TCloseParen
+  tokenise str      = (TLiteral <$> readMaybe str) <|> (TVar . head <$> ifTrue ((==) 1 . length) str)
 
-constructAST :: [ExpressionToken] -> Maybe Expression
-constructAST [TVar x] = Just $ EVar x
-constructAST (x:(TAddition:xs)) = do -- note: associates to the right
+constructAST :: [ExpressionToken] -> Either String Expression
+constructAST (TOpenParen:xs) = do
+  let (inside, after) = splitOnLast TCloseParen xs
+  inside' <- if inside == [] then Left "No closing paren" else maybeToRight "Can't happen" $ dropLast inside
+  after' <- if head after == TModulo then Right (tail after) else Left "Parenthesis currently only support modulo"
+  insideAST <- constructAST inside'
+  afterAST <- constructAST after'
+  return $ EModulo insideAST afterAST
+constructAST [TVar x] = Right $ EVar x
+constructAST (x:(TAddition:xs)) = do
   before <- constructAST [x]
   after <- constructAST xs
   return $ EAddition before after
-constructAST ((TLiteral b):[]) = Just $ ELiteral b
-constructAST _ = Nothing
+constructAST ((TLiteral x):[]) = Right $ ELiteral x
+constructAST (x:(TModulo:xs)) = do
+  before <- constructAST [x]
+  after <- constructAST xs
+  return $ EModulo before after
+constructAST [] = Left "No more tokens"
+constructAST xs = Left $ "Could not parse" ++ show xs
 
-parseExpression :: String -> Maybe Expression
-parseExpression = constructAST <=< tokeniseExpression
+parseExpression :: String -> Either String Expression
+parseExpression = constructAST <=< (maybeToRight "Error tokenising" . tokeniseExpression)
 
-parseOutput :: String -> Maybe [Output]
+parseOutput :: String -> Either String [Output]
 parseOutput = sequence . fmap (parseOutputPiece . unpack) . splitOn (pack "|") . pack where
-  parseOutputPiece :: String -> Maybe Output
-  parseOutputPiece "0" = Just $ OConstant False
-  parseOutputPiece "1" = Just $ OConstant True
-  parseOutputPiece x = OExpression <$> parseExpression x
+  parseOutputPiece :: String -> Either String Output
+  parseOutputPiece "0" = Right $ OConstant False
+  parseOutputPiece "1" = Right $ OConstant True
+  parseOutputPiece x   = OExpression <$> parseExpression x
 
-parseBinding :: Text -> Maybe Binding
+parseBinding :: Text -> Either String Binding
 parseBinding = (strongRightDistribute . bimap parsePattern parseOutput)
 	     <=< tupleFromList
 	       . fmap unpack
 	       . splitOn (pack ":")
 
 parse :: Text -> [Binding]
-parse = fmap (fromMaybe (error "Parsing Failed") . parseBinding) . splitOn (pack ";")
+parse = fmap parseBindingElseError . splitOn (pack ";") where
+  parseBindingElseError :: Text -> Binding
+  parseBindingElseError = fromEither . first (error . ((++) "Parsing Failed: ")) . parseBinding
 
 verify :: [Binding] -> [Binding]
 verify [] = error "No bindings specified"
 verify b@(x:xs) =  if (getAll $ fold $ (All . (== width) . length . fst) <$> xs) then b else error "All patterns must have the same width." where
   width = length $ fst x
-
-exp' :: Int -> Int -> Int
-exp' a = getProduct . fold . replicate a . Product
-
-both :: Bifunctor f => (a -> b) -> f a a -> f b b
-both f = bimap f f
-
-intToBitVector :: Int -> BitVector
-intToBitVector 0 = [False]
-intToBitVector 1 = [True]
-intToBitVector x = uncurry (++) $ both intToBitVector $ quotRem x 2
-
-bitVectorToInt :: BitVector -> Int
-bitVectorToInt [] = 0
-bitVectorToInt [False] = 0
-bitVectorToInt [True] = 1
-bitVectorToInt (x:xs) = (bitVectorToInt [x]) + (2 * bitVectorToInt xs)
 
 pad :: Int -> BitVector -> BitVector
 pad 0 _      = []
@@ -127,7 +153,7 @@ match bindings n = (first $ bitVariableMap n) <$> getFirstMatchedPattern n bindi
       matchesPiece _ _ = True
 
   bitVariableMap :: BitVector -> Pattern -> VariableCaptures
-  bitVariableMap n p = collapse $ zip n $ fmap patternPieceToVariableChar p where
+  bitVariableMap n p = collapse $ zip n $ (patternPieceToVariableChar <$> p) where
 
     patternPieceToVariableChar :: PatternPiece -> Maybe Char
     patternPieceToVariableChar (PLiteral _) = Nothing
@@ -140,7 +166,7 @@ match bindings n = (first $ bitVariableMap n) <$> getFirstMatchedPattern n bindi
       collapse' :: VariableCaptures -> (Bit, Maybe Char) -> VariableCaptures
       collapse' vc                   (_, Nothing)  = vc
       collapse' []                   (b, (Just c)) = (c, [b]):[]
-      collapse' (dbv@(d, bv):xs) bjc@(b, (Just c)) = if c == d then ((d, b:bv):xs) else dbv:(collapse' xs bjc)
+      collapse' (dbv@(d, bv):xs) bjc@(b, (Just c)) = if c == d then ((d, bv ++ [b]):xs) else dbv:(collapse' xs bjc)
 
 -- If no pattern matches a value in range, then the output is 0xFF
 defaultOutput :: (VariableCaptures, [Output])
@@ -152,32 +178,40 @@ replicateFirst (a, b:bs) = (a,b):(replicateFirst (a,bs))
 
 run :: [Binding] -> [BitVector]
 run [] = error "Can't happen"
-run bindings = (fold . fmap (uncurry eval) . replicateFirst . fromMaybe defaultOutput . match bindings . pad width . intToBitVector)
-     <$> [0..(exp' 2 width) - 1] where
+run bindings = (fold
+               . fmap (uncurry eval)
+               . replicateFirst
+               . fromMaybe defaultOutput
+               . match bindings
+               . pad width
+               . intToBitVector)
+              <$> [0..(exp' 2 width) - 1] where
   width = length $ fst $ head bindings
 
+  exp' :: Int -> Int -> Int
+  exp' a = getProduct . fold . flip replicate (Product a)
+
 eval :: VariableCaptures -> Output -> BitVector
-eval _  (OConstant b) = [b]
+eval _  (OConstant   b)        = [b]
 eval vc (OExpression (EVar x)) = findVar vc x where
 
   findVar :: VariableCaptures -> Char -> BitVector
-  findVar [] c = error $ "Unknown variable `" ++ [c] ++ "`"
+  findVar []          c = error $ "Unknown variable `" ++ [c] ++ "`"
   findVar ((c,bv):xs) d = if c == d then bv else findVar xs d
 
 eval vc (OExpression exp) = intToBitVector $ evalexp vc exp where
 
   evalexp :: VariableCaptures -> Expression -> Int
-  evalexp _  (EVar x) = error "Can't happen"
-  evalexp vc (EAddition exp1 exp2) = recurse (+) exp1 exp2
-  evalexp _  (ELiteral False) = 0
-  evalexp _  (ELiteral True) = 1
+  evalexp _  (EVar _)              = error "Can't happen"
+  evalexp vc (EAddition exp1 exp2) = recurse vc (+) exp1 exp2
+  evalexp vc (EModulo exp1 exp2)   = recurse vc mod exp1 exp2
+  evalexp _  (ELiteral x)          = x
 
-  recurse :: (Int -> Int -> Int) -> Expression -> Expression -> Int
-  recurse f exp1 exp2 = (uncurry f) $ both (bitVectorToInt . eval vc . OExpression) (exp1, exp2)
-
+  recurse :: VariableCaptures -> (Int -> Int -> Int) -> Expression -> Expression -> Int
+  recurse vc f exp1 exp2 = (uncurry f) $ both (bitVectorToInt . eval vc . OExpression) (exp1, exp2)
 
 main :: IO ()
 main = do
      args <- getArgs
      bindings <- return $ verify $ parse $ pack $ head args
-     putStrLn $ show $ run bindings
+     putStrLn $ show $ fmap showBitVector $ run bindings
