@@ -77,14 +77,15 @@ data ExpressionToken
   | TCloseParen
   deriving (Eq, Show)
 
-tokeniseExpression :: String -> Maybe [ExpressionToken]
+tokeniseExpression :: String -> Either String [ExpressionToken]
 tokeniseExpression = sequence . fmap (tokenise . unpack) . splitOn (pack " ") . pack where
-  tokenise :: String -> Maybe ExpressionToken
-  tokenise ('+':[]) = Just $ TAddition
-  tokenise ('%':[]) = Just $ TModulo
-  tokenise ('(':[]) = Just $ TOpenParen
-  tokenise (')':[]) = Just $ TCloseParen
-  tokenise str      = (TLiteral <$> readMaybe str) <|> (TVar . head <$> ifTrue ((==) 1 . length) str)
+  tokenise :: String -> Either String ExpressionToken
+  tokenise ('+':[]) = Right $ TAddition
+  tokenise ('%':[]) = Right $ TModulo
+  tokenise ('(':[]) = Right $ TOpenParen
+  tokenise (')':[]) = Right $ TCloseParen
+  tokenise str      = maybeToRight ("'" ++ str ++ "' is neither a literal nor a variable.")
+    $ (TLiteral <$> readMaybe str) <|> (TVar . head <$> ifTrue ((==) 1 . length) str)
 
 constructAST :: [ExpressionToken] -> Either String Expression
 constructAST (TOpenParen:xs) = do
@@ -108,7 +109,7 @@ constructAST [] = Left "No more tokens"
 constructAST xs = Left $ "Could not parse" ++ show xs
 
 parseExpression :: String -> Either String Expression
-parseExpression = constructAST <=< (maybeToRight "Error tokenising" . tokeniseExpression)
+parseExpression = constructAST <=< tokeniseExpression
 
 parseOutput :: String -> Either String [Output]
 parseOutput = sequence . fmap (parseOutputPiece . unpack) . splitOn (pack "|") . pack where
