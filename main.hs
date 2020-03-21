@@ -60,14 +60,14 @@ bitVectorToInt = bitVectorToInt' . reverse where
 type VariableCapture = (Char, BitVector)
 type VariableCaptures = [VariableCapture]
 
-parsePatternPiece :: Char -> PatternPiece
-parsePatternPiece '0' = PLiteral False
-parsePatternPiece '1' = PLiteral True
-parsePatternPiece '-' = PDontCare
-parsePatternPiece x   = PVar x -- TODO: is '2' a valid variable?
+parsePatternPiece :: Char -> Either String PatternPiece
+parsePatternPiece '0' = Right $ PLiteral False
+parsePatternPiece '1' = Right $ PLiteral True
+parsePatternPiece '-' = Right $ PDontCare
+parsePatternPiece x   = if Utils.isLowerCaseLetter x then Right (PVar x) else Left ("'" ++ [x] ++ "' is not a single character from the set of lowercase letters")
 
-parsePattern :: String -> Pattern
-parsePattern = fmap parsePatternPiece
+parsePattern :: String -> Either String Pattern
+parsePattern = sequence . fmap parsePatternPiece
 
 parseExpression :: String -> Either String Expression
 parseExpression = fmap fst . Utils.maybeToRight "Parser Failed" . listToMaybe . ReadP.readP_to_S rootExpressionParser where
@@ -84,7 +84,7 @@ parseExpression = fmap fst . Utils.maybeToRight "Parser Failed" . listToMaybe . 
       parseBinaryOperation "%" EModulo,
       parseBinaryOperation "==" EEqual,
       ELiteral <$> parseNumber,
-      EVar <$> ReadP.get
+      EVar <$> parseAlphaChar
       ] where
 
     parseNumber :: ReadP.ReadP Int
@@ -92,6 +92,9 @@ parseExpression = fmap fst . Utils.maybeToRight "Parser Failed" . listToMaybe . 
 
       parseDigit :: ReadP.ReadP Int
       parseDigit = digitToInt <$> (ReadP.satisfy $ (\char -> any (char ==) "0123456789"))
+
+    parseAlphaChar :: ReadP.ReadP Char
+    parseAlphaChar = ReadP.satisfy $ Utils.isLowerCaseLetter
 
     parseBinaryOperation :: String -> (Expression -> Expression -> Expression) -> ReadP.ReadP Expression
     parseBinaryOperation symbol constructor = do
@@ -114,7 +117,7 @@ parseOutput = sequence . fmap (parseOutputPiece . unpack) . splitOn (pack "|") .
   parseOutputPiece x   = OExpression <$> parseExpression x
 
 parseBinding :: Text -> Either String Binding
-parseBinding = (Utils.strongRightDistribute . bimap parsePattern parseOutput)
+parseBinding = (Utils.sequencePair . bimap parsePattern parseOutput)
 	     <=< Utils.tupleFromList
 	       . fmap unpack
 	       . splitOn (pack ":")

@@ -2,10 +2,11 @@ module Utils
 ( both
 , dropLast
 , fromEither
+, isLowerCaseLetter
 , ifTrue
 , maybeToRight
+, sequencePair
 , splitOnLast
-, strongRightDistribute
 , tupleFromList
 ) where
 
@@ -13,10 +14,11 @@ import Data.Bifunctor (Bifunctor, bimap)
 import Data.List (elemIndices, splitAt, uncons)
 import Data.Maybe (Maybe, listToMaybe)
 
-strongRightDistribute :: Monad f => (a, f b) -> f (a , b)
-strongRightDistribute (x,y) = do
-  y' <- y
-  return (x, y')
+sequencePair :: Monad m => (m a, m b) -> m (a,b)
+sequencePair (a,b) = do
+  a' <- a
+  b' <- b
+  return (a', b')
 
 maybeToRight :: a -> Maybe b -> Either a b
 maybeToRight a Nothing = Left a
@@ -46,3 +48,6 @@ splitOnLast x xs
 dropLast :: [a] -> Maybe [a]
 dropLast [] = Nothing
 dropLast xs = Just $ reverse $ drop 1 $ reverse xs
+
+isLowerCaseLetter :: Char -> Bool
+isLowerCaseLetter char = any (char ==) "abcdefghijklmnopqrstuvwxyz"
