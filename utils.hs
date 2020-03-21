@@ -5,6 +5,7 @@ module Utils
 , isLowerCaseLetter
 , ifTrue
 , maybeToRight
+, replicateFirst
 , sequencePair
 , splitOnLast
 , tupleFromList
@@ -51,3 +52,7 @@ dropLast xs = Just $ reverse $ drop 1 $ reverse xs
 
 isLowerCaseLetter :: Char -> Bool
 isLowerCaseLetter char = any (char ==) "abcdefghijklmnopqrstuvwxyz"
+
+replicateFirst :: (a, [b]) -> [(a,b)]
+replicateFirst (a, []) = []
+replicateFirst (a, b:bs) = (a,b):(replicateFirst (a,bs))

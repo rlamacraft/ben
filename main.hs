@@ -171,15 +171,11 @@ match bindings n = (first $ bitVariableMap n) <$> getFirstMatchedPattern n bindi
 defaultOutput :: (VariableCaptures, [Output])
 defaultOutput = ([], (replicate 8 (OConstant True)))
 
-replicateFirst :: (a, [b]) -> [(a,b)]
-replicateFirst (a, []) = []
-replicateFirst (a, b:bs) = (a,b):(replicateFirst (a,bs))
-
 run :: [Binding] -> [BitVector]
 run [] = error "Can't happen"
 run bindings = (fold
                . fmap (uncurry eval)
-               . replicateFirst
+               . Utils.replicateFirst
                . fromMaybe defaultOutput
                . match bindings
                . pad width
