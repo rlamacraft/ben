@@ -1,12 +1,14 @@
 import Control.Applicative ((<*>), (<|>))
 import Control.Monad (sequence, (<=<))
 import Data.Bifunctor (Bifunctor, bimap, first, second)
+import Data.Char (digitToInt)
 import Data.Foldable (fold)
 import Data.Function (flip)
 import Data.Maybe (Maybe(..), fromMaybe, listToMaybe)
 import Data.Monoid (All(..), Any(..), Product(..))
 import Data.Text (Text, pack, splitOn, singleton, unpack)
 import System.Environment
+import Text.ParserCombinators.ReadP (ReadP, readP_to_S, get, satisfy, many, choice, char, look, pfail, eof, string, skipSpaces)
 import Text.Read (readMaybe)
 
 import Utils (both, dropLast, fromEither, ifTrue, maybeToRight, splitOnLast, strongRightDistribute, tupleFromList)
@@ -22,7 +24,7 @@ data Expression
   | ELiteral Int
   | EAddition Expression Expression
   | EModulo Expression Expression
-  | EParen Expression
+  | EEqual Expression Expression
   deriving (Show)
 
 data Output
@@ -68,48 +70,59 @@ parsePatternPiece x   = PVar x -- TODO: is '2' a valid variable?
 parsePattern :: String -> Pattern
 parsePattern = fmap parsePatternPiece
 
-data ExpressionToken
-  = TVar Char
-  | TLiteral Int
-  | TAddition
-  | TModulo
-  | TOpenParen
-  | TCloseParen
-  deriving (Eq, Show)
-
-tokeniseExpression :: String -> Either String [ExpressionToken]
-tokeniseExpression = sequence . fmap (tokenise . unpack) . splitOn (pack " ") . pack where
-  tokenise :: String -> Either String ExpressionToken
-  tokenise ('+':[]) = Right $ TAddition
-  tokenise ('%':[]) = Right $ TModulo
-  tokenise ('(':[]) = Right $ TOpenParen
-  tokenise (')':[]) = Right $ TCloseParen
-  tokenise str      = maybeToRight ("'" ++ str ++ "' is neither a literal nor a variable.")
-    $ (TLiteral <$> readMaybe str) <|> (TVar . head <$> ifTrue ((==) 1 . length) str)
-
-constructAST :: [ExpressionToken] -> Either String Expression
-constructAST (TOpenParen:xs) = do
-  let (inside, after) = splitOnLast TCloseParen xs
-  inside' <- if inside == [] then Left "No closing paren" else maybeToRight "Can't happen" $ dropLast inside
-  after' <- if head after == TModulo then Right (tail after) else Left "Parenthesis currently only support modulo"
-  insideAST <- constructAST inside'
-  afterAST <- constructAST after'
-  return $ EModulo insideAST afterAST
-constructAST [TVar x] = Right $ EVar x
-constructAST (x:(TAddition:xs)) = do
-  before <- constructAST [x]
-  after <- constructAST xs
-  return $ EAddition before after
-constructAST ((TLiteral x):[]) = Right $ ELiteral x
-constructAST (x:(TModulo:xs)) = do
-  before <- constructAST [x]
-  after <- constructAST xs
-  return $ EModulo before after
-constructAST [] = Left "No more tokens"
-constructAST xs = Left $ "Could not parse" ++ show xs
-
 parseExpression :: String -> Either String Expression
-parseExpression = constructAST <=< tokeniseExpression
+parseExpression = fmap fst . maybeToRight "Parser Failed" . listToMaybe . readP_to_S rootExpressionParser where
+
+  rootExpressionParser :: ReadP Expression
+  rootExpressionParser = do
+    exp <- expressionParser
+    eof
+    return exp
+
+  expressionParser :: ReadP Expression
+  expressionParser = do
+    exp <- choice [
+      parseAddition,
+      parseModulo,
+      parseEqual,
+      parseLiteral,
+      parseVariable
+      ]
+    return exp
+
+  parseVariable :: ReadP Expression
+  parseVariable = EVar <$> satisfy (\_ -> True)
+
+  parseLiteral :: ReadP Expression
+  parseLiteral = ELiteral <$> parseNumber where
+
+    parseNumber :: ReadP Int
+    parseNumber = foldl (\acc -> (+) (acc * 10)) 0 <$> many parseDigit
+
+    parseDigit :: ReadP Int
+    parseDigit = digitToInt <$> (satisfy $ (\char -> any (char ==) "0123456789"))
+
+  parseAddition :: ReadP Expression
+  parseAddition = parseBinaryOperation "+" EAddition
+
+  parseModulo :: ReadP Expression
+  parseModulo = parseBinaryOperation "%" EModulo
+
+  parseEqual :: ReadP Expression
+  parseEqual = parseBinaryOperation "==" EEqual
+
+  parseBinaryOperation :: String -> (Expression -> Expression -> Expression) -> ReadP Expression
+  parseBinaryOperation symbol constructor = do
+    char '('
+    skipSpaces
+    before <- expressionParser
+    skipSpaces
+    string symbol
+    skipSpaces
+    after <- expressionParser
+    skipSpaces
+    char ')'
+    return $ constructor before after
 
 parseOutput :: String -> Either String [Output]
 parseOutput = sequence . fmap (parseOutputPiece . unpack) . splitOn (pack "|") . pack where
