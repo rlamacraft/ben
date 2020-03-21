@@ -1,17 +1,16 @@
-import Control.Applicative ((<*>), (<|>))
-import Control.Monad (sequence, (<=<))
-import Data.Bifunctor (Bifunctor, bimap, first, second)
-import Data.Char (digitToInt)
-import Data.Foldable (fold)
-import Data.Function (flip)
-import Data.Maybe (Maybe(..), fromMaybe, listToMaybe)
-import Data.Monoid (All(..), Any(..), Product(..))
-import Data.Text (Text, pack, splitOn, singleton, unpack)
-import System.Environment
-import Text.ParserCombinators.ReadP (ReadP, readP_to_S, get, satisfy, many, choice, char, look, pfail, eof, string, skipSpaces)
-import Text.Read (readMaybe)
-
-import Utils (both, dropLast, fromEither, ifTrue, maybeToRight, splitOnLast, strongRightDistribute, tupleFromList)
+import           Control.Applicative ((<*>), (<|>))
+import           Control.Monad (sequence, (<=<))
+import           Data.Bifunctor (Bifunctor, bimap, first, second)
+import           Data.Char (digitToInt)
+import           Data.Foldable (fold)
+import           Data.Function (flip)
+import           Data.Maybe (Maybe(..), fromMaybe, listToMaybe)
+import           Data.Monoid (All(..), Any(..), Product(..))
+import           Data.Text (Text, pack, splitOn, singleton, unpack)
+import           System.Environment
+import qualified Text.ParserCombinators.ReadP as ReadP
+import           Text.Read (readMaybe)
+import qualified Utils
 
 data PatternPiece
   = PLiteral Bool
@@ -51,7 +50,7 @@ showBitVector = fmap showBit where
 intToBitVector :: Int -> BitVector
 intToBitVector 0 = [False]
 intToBitVector 1 = [True]
-intToBitVector x = uncurry (++) $ both intToBitVector $ quotRem x 2
+intToBitVector x = uncurry (++) $ Utils.both intToBitVector $ quotRem x 2
 
 bitVectorToInt :: BitVector -> Int
 bitVectorToInt = bitVectorToInt' . reverse where
@@ -71,59 +70,42 @@ parsePattern :: String -> Pattern
 parsePattern = fmap parsePatternPiece
 
 parseExpression :: String -> Either String Expression
-parseExpression = fmap fst . maybeToRight "Parser Failed" . listToMaybe . readP_to_S rootExpressionParser where
+parseExpression = fmap fst . Utils.maybeToRight "Parser Failed" . listToMaybe . ReadP.readP_to_S rootExpressionParser where
 
-  rootExpressionParser :: ReadP Expression
+  rootExpressionParser :: ReadP.ReadP Expression
   rootExpressionParser = do
     exp <- expressionParser
-    eof
+    ReadP.eof
     return exp
 
-  expressionParser :: ReadP Expression
-  expressionParser = do
-    exp <- choice [
-      parseAddition,
-      parseModulo,
-      parseEqual,
-      parseLiteral,
-      parseVariable
-      ]
-    return exp
+  expressionParser :: ReadP.ReadP Expression
+  expressionParser = ReadP.choice [
+      parseBinaryOperation "+" EAddition,
+      parseBinaryOperation "%" EModulo,
+      parseBinaryOperation "==" EEqual,
+      ELiteral <$> parseNumber,
+      EVar <$> ReadP.get
+      ] where
 
-  parseVariable :: ReadP Expression
-  parseVariable = EVar <$> satisfy (\_ -> True)
+    parseNumber :: ReadP.ReadP Int
+    parseNumber = foldl (\acc -> (+) (acc * 10)) 0 <$> ReadP.many parseDigit where
 
-  parseLiteral :: ReadP Expression
-  parseLiteral = ELiteral <$> parseNumber where
+      parseDigit :: ReadP.ReadP Int
+      parseDigit = digitToInt <$> (ReadP.satisfy $ (\char -> any (char ==) "0123456789"))
 
-    parseNumber :: ReadP Int
-    parseNumber = foldl (\acc -> (+) (acc * 10)) 0 <$> many parseDigit
-
-    parseDigit :: ReadP Int
-    parseDigit = digitToInt <$> (satisfy $ (\char -> any (char ==) "0123456789"))
-
-  parseAddition :: ReadP Expression
-  parseAddition = parseBinaryOperation "+" EAddition
-
-  parseModulo :: ReadP Expression
-  parseModulo = parseBinaryOperation "%" EModulo
-
-  parseEqual :: ReadP Expression
-  parseEqual = parseBinaryOperation "==" EEqual
-
-  parseBinaryOperation :: String -> (Expression -> Expression -> Expression) -> ReadP Expression
-  parseBinaryOperation symbol constructor = do
-    char '('
-    skipSpaces
-    before <- expressionParser
-    skipSpaces
-    string symbol
-    skipSpaces
-    after <- expressionParser
-    skipSpaces
-    char ')'
-    return $ constructor before after
-
+    parseBinaryOperation :: String -> (Expression -> Expression -> Expression) -> ReadP.ReadP Expression
+    parseBinaryOperation symbol constructor = do
+      ReadP.char '('
+      ReadP.skipSpaces
+      before <- expressionParser
+      ReadP.skipSpaces
+      ReadP.string symbol
+      ReadP.skipSpaces
+      after <- expressionParser
+      ReadP.skipSpaces
+      ReadP.char ')'
+      return $ constructor before after
+  
 parseOutput :: String -> Either String [Output]
 parseOutput = sequence . fmap (parseOutputPiece . unpack) . splitOn (pack "|") . pack where
   parseOutputPiece :: String -> Either String Output
@@ -132,15 +114,15 @@ parseOutput = sequence . fmap (parseOutputPiece . unpack) . splitOn (pack "|") .
   parseOutputPiece x   = OExpression <$> parseExpression x
 
 parseBinding :: Text -> Either String Binding
-parseBinding = (strongRightDistribute . bimap parsePattern parseOutput)
-	     <=< tupleFromList
+parseBinding = (Utils.strongRightDistribute . bimap parsePattern parseOutput)
+	     <=< Utils.tupleFromList
 	       . fmap unpack
 	       . splitOn (pack ":")
 
 parse :: Text -> [Binding]
 parse = fmap parseBindingElseError . splitOn (pack ";") where
   parseBindingElseError :: Text -> Binding
-  parseBindingElseError = fromEither . first (error . ((++) "Parsing Failed: ")) . parseBinding
+  parseBindingElseError = Utils.fromEither . first (error . ((++) "Parsing Failed: ")) . parseBinding
 
 verify :: [Binding] -> [Binding]
 verify [] = error "No bindings specified"
@@ -222,7 +204,7 @@ eval vc (OExpression exp) = intToBitVector $ evalexp vc exp where
   evalexp _  (ELiteral x)          = x
 
   recurse :: VariableCaptures -> (Int -> Int -> Int) -> Expression -> Expression -> Int
-  recurse vc f exp1 exp2 = (uncurry f) $ both (bitVectorToInt . eval vc . OExpression) (exp1, exp2)
+  recurse vc f exp1 exp2 = (uncurry f) $ Utils.both (bitVectorToInt . eval vc . OExpression) (exp1, exp2)
 
 main :: IO ()
 main = do
