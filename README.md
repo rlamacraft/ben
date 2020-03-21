@@ -28,16 +28,22 @@ Note: any values in range that do not match any pattern will result in `0xFF`
 
 * Output should be 1 more than input
 ```
-"xx:x + 1"
+"xx:(x + 1)"
 ```
 Gives [001, 010, 011, 100]
 
 * Module that 1 more than the input by 4 to ensure 2-bit output
 ```
-"xxx:( x + 1 ) % 4"
+"xxx:(( x + 1 ) % 4)"
 ```
 Gives [1,10,11,0,1,10,11,0]
 
+* Equality is useful for outputing status e.g. zero flag from an ALU
+```
+"xxyy:(((x + y) % 4) == 0)"
+```
+Gives [1,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0]
+
+
 ## TODOs
 - Output to stdout as binary data
-- Support modulo operator

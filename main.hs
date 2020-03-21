@@ -6,7 +6,7 @@ import           Data.Foldable (fold)
 import           Data.Function (flip)
 import           Data.Maybe (Maybe(..), fromMaybe, listToMaybe)
 import           Data.Monoid (All(..), Any(..), Product(..))
-import           Data.Text (Text, pack, splitOn, singleton, unpack)
+import           Data.Text (Text, pack, splitOn, unpack)
 import           System.Environment
 import qualified Text.ParserCombinators.ReadP as ReadP
 import           Text.Read (readMaybe)
@@ -200,6 +200,7 @@ eval vc (OExpression exp) = intToBitVector $ evalexp vc exp where
   evalexp _  (EVar _)              = error "Can't happen"
   evalexp vc (EAddition exp1 exp2) = recurse vc (+) exp1 exp2
   evalexp vc (EModulo exp1 exp2)   = recurse vc mod exp1 exp2
+  evalexp vc (EEqual exp1 exp2)    = recurse vc (\x -> bitVectorToInt . pure . (== x)) exp1 exp2
   evalexp _  (ELiteral x)          = x
 
   recurse :: VariableCaptures -> (Int -> Int -> Int) -> Expression -> Expression -> Int
